@@ -2,23 +2,19 @@ import json
 import boto3
 import scrapy
 from scrapy import signals
+from scrapy.utils.project import get_project_settings
 
 class MySpiderAmys(scrapy.Spider):
     name = 'amys'
     
-    CLIENT = boto3.client('s3')
-    BUCKET = "scrape-url-data"
-    FILE = 'RecipeData.json'
+    def __init__(self, baseUrl=None, **kwargs):
+        super(MySpiderAmys, self).__init__()
+        self.baseUrl = baseUrl
+        self.settings = get_project_settings()
+        self.CLIENT = boto3.client('s3')
+        self.BUCKET = self.settings.get('S3_BUCKET_NAME')
+        self.FILE = self.settings.get('S3_FILE_NAME')
     
-    def __init__(self, name=None, **kwargs):
-        print(kwargs)
-        self.baseUrl = kwargs.get("baseUrl")
-        del kwargs['baseUrl']
-        self.keysfields = list(kwargs.keys())
-        self.valueSelectors = list(kwargs.values())
-        
-
-        
     @classmethod
     def from_crawler(cls, crawler, *args, **kwargs):
         spider = super(MySpiderAmys, cls).from_crawler(crawler, *args, **kwargs)
@@ -31,23 +27,23 @@ class MySpiderAmys(scrapy.Spider):
 
     def spider_closed(self, spider):
         print('Closing {} spider'.format(spider.name))
-    
+
     def start_requests(self):
         yield scrapy.Request(url=self.baseUrl, callback=self.parse)
 
     def parse(self, response):
-
         recipe = {}
-        print(self.keysfields)
-        print(self.valueSelectors)
-        for idx in range(len(self.keysfields)):
-            if self.keysfields[idx] == 'recipeInstruction' or self.keysfields[idx] == 'recipeIngredient':
-                recipe[self.keysfields[idx]] = response.xpath(f"{self.valueSelectors[idx]}").getall()
+        keysfields = self.settings.getlist('KEYS_FIELDS')
+        valueSelectors = self.settings.getlist('VALUE_SELECTORS')
+
+        for idx in range(len(keysfields)):
+            if keysfields[idx] == 'recipeInstruction' or keysfields[idx] == 'recipeIngredient':
+                recipe[keysfields[idx]] = response.xpath(valueSelectors[idx]).getall()
             else:
-                recipe[self.keysfields[idx]] = response.xpath(f"{self.valueSelectors[idx]}").get("")
-        print(recipe)
+                recipe[keysfields[idx]] = response.xpath(valueSelectors[idx]).get("")
+
         try:
             recipeDataStream = bytes(json.dumps(recipe).encode("UTF-8"))
             self.CLIENT.put_object(Bucket=self.BUCKET, Key=self.FILE, Body=recipeDataStream)
-        except:
-            print("unable to upload file to bucket: {}" %self.BUCKET)
+        except Exception as e:
+            self.logger.error(f"Unable to upload file to bucket: {self.BUCKET}. Error: {str(e)}")
